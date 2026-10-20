@@ -1,71 +1,154 @@
 # Naukri Resume Auto-Updater
 
-Automatically refresh your Naukri profile resume from a PDF stored in Google Drive using GitHub Actions. The workflow supports scheduled runs and manual runs.
-
-> **Schedule:** 1:00 AM, 7:00 AM, and 12:00 PM India Standard Time (IST). GitHub Actions uses UTC cron expressions, and scheduled runs may start a little later than the configured time.
+Automatically update your Naukri profile resume every day using GitHub Actions. This keeps your profile active and visible to recruiters.
 
 ---
 
 ## How It Works
 
-1. Downloads your resume PDF from Google Drive.
-2. Uses the configured Naukri session cookies and form key to authenticate the upload request.
-3. Runs automatically three times a day through GitHub Actions.
-4. Can also be started manually from the Actions tab.
+1. Downloads your resume PDF from Google Drive
+2. Logs into Naukri using cookies (bypasses OTP)
+3. Uploads the resume to your profile
+4. Runs daily at 6 AM IST via GitHub Actions
 
-## Quick Setup
+---
 
-### 1. Configure your resume PDF
+## Quick Setup (5 Steps)
 
-1. Upload your resume to [Google Drive](https://drive.google.com) as a PDF.
-2. Copy the file ID from its sharing URL. For a URL like `https://drive.google.com/file/d/FILE_ID/view`, the file ID is `FILE_ID`.
-3. Ensure the file can be downloaded by the workflow. A publicly accessible link is the simplest setup, but consider the privacy implications before making a resume public.
+### Step 1: Fork This Repository
 
-### 2. Get the Naukri form key
+1. Click the **Fork** button at the top right of this page
+2. This creates a copy in your GitHub account
 
-The upload implementation may require a current `formKey` from Naukri. Sign in to [Naukri](https://www.naukri.com), use the profile's Update Resume flow, and inspect the relevant upload request in your browser's developer tools. Treat this value as sensitive and do not publish it.
+---
 
-### 3. Configure GitHub Actions secrets
+### Step 2: Upload Resume to Google Drive
 
-In your repository, open **Settings → Secrets and variables → Actions** and configure these repository secrets:
+1. Go to [Google Drive](https://drive.google.com)
+2. Upload your resume (must be **PDF** format)
+3. Right-click the file → **Share** → **General access** → **Anyone with the link**
+4. Click **Copy link**
 
-| Secret | Purpose |
-|---|---|
-| `GOOGLE_DRIVE_FILE_ID` | ID of the resume PDF in Google Drive |
-| `NAUKRI_FORM_KEY` | Naukri upload form key required by the script |
-| `NAUKRI_COOKIES` | Current Naukri session cookie string used by the script |
+**Example link:**
+```
+https://drive.google.com/file/d/1ABC123xyz/view?usp=sharing
+```
 
-Never paste session cookies, form keys, or other credentials into issues, commits, logs, or chat. Session cookies can grant access to your account. Use them only in repository secrets, refresh them when they expire, and revoke or replace them if exposed. Automated uploads depend on Naukri's current site behavior and applicable terms; this workflow is not an official Naukri API integration.
+**Your FILE_ID is:** `1ABC123xyz` (the part between `/d/` and `/view`)
 
-## Schedule
+---
 
-The workflow file is `.github/workflows/Resume-Updater.yml`. Its schedule is:
+### Step 3: Get FORM_KEY from Naukri
 
-| Intended IST time | UTC cron | Explanation |
-|---|---|---|
-| 1:00 AM | `30 19 * * *` | 7:30 PM UTC on the previous day |
-| 7:00 AM | `30 1 * * *` | 1:30 AM UTC |
-| 12:00 PM (noon) | `30 6 * * *` | 6:30 AM UTC |
+This is required for resume upload to work.
 
-India Standard Time is UTC+05:30. These cron entries are UTC-based and run daily. GitHub may delay scheduled workflow starts during busy periods; they are not guaranteed to start at the exact minute.
+1. Login to [Naukri.com](https://www.naukri.com)
+2. Go to your profile and click **Update Resume**
+3. Open **DevTools** (Press `F12`)
+4. Go to **Network** tab
+5. Upload any resume manually
+6. Look for a request to `filevalidation.naukri.com/file`
+7. Click it → **Payload** tab → Find `formKey`
 
-## Run Manually and Verify
+**Example:** `formKey: F1a2b3c4d5e6f7`
 
-1. Open the repository's [Actions tab](https://github.com/Arun-Negi/naukri-resume-updater/actions).
-2. Select **Update Naukri Resume**.
-3. Choose **Run workflow**, select the `main` branch, and start it.
-4. Open the run and inspect the logs and final status. Confirm the resume was updated on Naukri as well; a successful workflow status alone may not prove that the profile changed.
+**Your FORM_KEY is:** `F1a2b3c4d5e6f7`
 
-The workflow supports `workflow_dispatch`, so you can run it manually without waiting for the next scheduled time.
+---
 
-## Maintenance and Troubleshooting
+### Step 4: Get NAUKRI_COOKIES
 
-- **Authentication or profile-fetch errors:** The Naukri session may have expired or the site's authentication flow may have changed. Refresh the session securely and update `NAUKRI_COOKIES` in repository secrets.
-- **Form-key or upload errors:** Check whether the current upload request still uses the expected form key and whether the script matches Naukri's current upload behavior.
-- **PDF/download errors:** Verify that `GOOGLE_DRIVE_FILE_ID` is correct and the file is accessible and is a valid PDF.
-- **Workflow did not run:** Check that GitHub Actions is enabled, the workflow exists on the default branch, and the Actions tab shows the scheduled or manual run.
-- **Unexpected timing:** Scheduled workflows use UTC and may be delayed by GitHub. Check the run's timestamp and the `Print IST current time` step in the logs.
+Naukri sends OTP for automated logins. We bypass this using browser cookies.
+
+1. Login to [Naukri.com](https://www.naukri.com) in Chrome (complete OTP if asked)
+2. Once logged in, press `F12` to open DevTools
+3. Go to **Application** tab → **Cookies** → `https://www.naukri.com`
+4. Find and copy these 3 cookies:
+
+| Cookie Name | Example Value |
+|-------------|---------------|
+| `nauk_at` | `eyJraWQiOiIz...` (very long) |
+| `nauk_rt` | `672301de8278...` |
+| `nauk_sid` | `672301de8278...` |
+
+5. Format them as one string:
+
+```
+nauk_at=YOUR_NAUK_AT_VALUE; nauk_rt=YOUR_NAUK_RT_VALUE; nauk_sid=YOUR_NAUK_SID_VALUE
+```
+
+**Quick Method:** Run this in DevTools Console tab:
+```javascript
+['nauk_at','nauk_rt','nauk_sid'].map(n=>`${n}=${document.cookie.split('; ').find(c=>c.startsWith(n))?.split('=').slice(1).join('=')}`).join('; ')
+```
+
+---
+
+### Step 5: Add GitHub Secrets
+
+1. Go to your forked repository on GitHub
+2. Click **Settings** → **Secrets and variables** → **Actions**
+3. Click **New repository secret** and add these 3 secrets:
+
+| Secret Name | Value |
+|-------------|-------|
+| `GOOGLE_DRIVE_FILE_ID` | Your file ID from Step 2 |
+| `NAUKRI_FORM_KEY` | Your form key from Step 3 |
+| `NAUKRI_COOKIES` | Your cookie string from Step 4 |
+
+---
+
+## Test the Workflow
+
+1. Go to your repository → **Actions** tab
+2. Click **Update Naukri Resume** workflow
+3. Click **Run workflow** → **Run workflow**
+4. Wait for it to complete (green checkmark = success)
+
+---
+
+## Change Schedule
+
+The workflow runs daily at **6 AM IST** by default.
+
+To change the time, edit `.github/workflows/ResumeUpdater.yml`:
+
+```yaml
+schedule:
+  - cron: '30 0 * * *'  # 6:00 AM IST (00:30 UTC)
+```
+
+**Cron format:** `minute hour * * *` (in UTC)
+
+| IST Time | UTC Cron |
+|----------|----------|
+| 6:00 AM | `30 0 * * *` |
+| 7:00 AM | `30 1 * * *` |
+| 8:00 AM | `30 2 * * *` |
+| 9:00 AM | `30 3 * * *` |
+
+---
+
+## Important Notes
+
+- **Cookies expire in ~30 days** - You need to refresh them monthly by logging into Naukri again and updating the `NAUKRI_COOKIES` secret
+- **Resume must be PDF** format
+- **Google Drive file must be publicly accessible** (Anyone with the link)
+- GitHub Actions may have **5-15 minute delays** during high traffic
+
+---
+
+## Troubleshooting
+
+| Error | Solution |
+|-------|----------|
+| `Not a valid PDF` | Make sure Google Drive file is public and is a PDF |
+| `No auth token` | Cookies expired - refresh them (Step 4) |
+| `Profile fetch failed` | Token refresh failed - get new cookies |
+| Workflow not running | Check Actions tab is enabled in your fork |
+
+---
 
 ## License
 
-MIT — see the repository's license file.
+MIT - Feel free to use and modify.
