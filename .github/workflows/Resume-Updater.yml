@@ -2,33 +2,53 @@ name: Update Naukri Resume
 
 on:
   schedule:
-    - cron: '30 0 * * *'
+    # GitHub cron uses UTC: 09:00, 13:00 and 18:00 IST.
+    - cron: "30 3 * * *"
+    - cron: "30 7 * * *"
+    - cron: "30 12 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naukri-resume-update
+  cancel-in-progress: false
 
 jobs:
   update-resume:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
+      - name: Show scheduled time
+        run: echo "Current IST time: $(TZ='Asia/Kolkata' date)"
 
-      - name: Print IST current time
-        run: |
-          echo "Current IST time: $(TZ='Asia/Kolkata' date)"
-          
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
-        run: pip install requests
+        run: python -m pip install --upgrade pip requests
+
+      - name: Validate required secrets are configured
+        env:
+          NAUKRI_COOKIES: ${{ secrets.NAUKRI_COOKIES }}
+          GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
+          NAUKRI_FORM_KEY: ${{ secrets.NAUKRI_FORM_KEY }}
+        run: |
+          test -n "$NAUKRI_COOKIES" || (echo "::error::Missing NAUKRI_COOKIES secret" && exit 1)
+          test -n "$GOOGLE_DRIVE_FILE_ID" || (echo "::error::Missing GOOGLE_DRIVE_FILE_ID secret" && exit 1)
+          test -n "$NAUKRI_FORM_KEY" || (echo "::error::Missing NAUKRI_FORM_KEY secret" && exit 1)
 
       - name: Run resume updater
         env:
-          NAUKRI_COOKIES:       ${{ secrets.NAUKRI_COOKIES }}
+          NAUKRI_COOKIES: ${{ secrets.NAUKRI_COOKIES }}
           GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
-          NAUKRI_FORM_KEY:      ${{ secrets.NAUKRI_FORM_KEY }}
+          NAUKRI_FORM_KEY: ${{ secrets.NAUKRI_FORM_KEY }}
         run: python updateDaily.py
