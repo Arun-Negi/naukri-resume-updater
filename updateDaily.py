@@ -40,14 +40,29 @@ def parse_cookies(cookie_str):
 
 
 def refresh_token(session, refresh_token_val):
-    resp = session.post(
-        "https://www.naukri.com/central-login-services/v1/login/token/refresh",
-        headers={**HEADERS, "content-type": "application/json"},
-        json={"refreshToken": refresh_token_val},
-        verify=False
-    )
-    if resp.status_code == 200:
-        return session.cookies.get("nauk_at")
+    previous_token = session.cookies.get("nauk_at")
+    try:
+        resp = session.post(
+            "https://www.naukri.com/central-login-services/v1/login/token/refresh",
+            headers={**HEADERS, "content-type": "application/json"},
+            json={"refreshToken": refresh_token_val},
+            timeout=20,
+            verify=False
+        )
+    except requests.RequestException as exc:
+        print(f"[WARN] Token refresh request failed ({type(exc).__name__})")
+        return None
+
+    if resp.status_code != 200:
+        # Do not print the response body: authentication responses may contain sensitive data.
+        print(f"[WARN] Token refresh returned HTTP {resp.status_code}")
+        return None
+
+    refreshed_token = resp.cookies.get("nauk_at") or session.cookies.get("nauk_at")
+    if refreshed_token and refreshed_token != previous_token:
+        return refreshed_token
+
+    print("[WARN] Refresh endpoint returned HTTP 200 but no new nauk_at cookie")
     return None
 
 
@@ -55,8 +70,15 @@ def get_profile_id(session, token):
     resp = session.get(
         "https://www.naukri.com/cloudgateway-mynaukri/resman-aggregator-services/v0/users/self/dashboard",
         headers={**HEADERS, "authorization": f"Bearer {token}"},
+        timeout=20,
         verify=False
     )
+    if resp.status_code == 401:
+        raise RuntimeError(
+            "Naukri rejected the session token (HTTP 401). Refresh NAUKRI_COOKIES "
+            "using a current browser session, then rerun the workflow. "
+            "No resume upload was attempted."
+        )
     resp.raise_for_status()
     data = resp.json()
     return data.get("dashBoard", {}).get("profileId") or data.get("profileId")
@@ -108,10 +130,16 @@ def main():
         print("No auth token available — update NAUKRI_COOKIES secret")
         sys.exit(1)
 
-    print("[OK] Authenticated")
-
-    profile_id = get_profile_id(session, token)
-    print(f"[OK] Profile ID: {profile_id}")
+    try:
+        profile_id = get_profile_id(session, token)
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}")
+        sys.exit(1)
+    print("[OK] Naukri session validated")
+    if not profile_id:
+        print("[ERROR] Naukri dashboard response did not contain a profile ID; stopping before upload.")
+        sys.exit(1)
+    print("[OK] Profile ID retrieved")
 
     pdf = download_pdf(FILE_ID)
     print(f"[OK] Downloaded PDF ({len(pdf):,} bytes)")
