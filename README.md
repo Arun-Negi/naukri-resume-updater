@@ -1,154 +1,81 @@
-# Naukri Resume Auto-Updater
+# Naukri Resume Updater
 
-Automatically update your Naukri profile resume every day using GitHub Actions. This keeps your profile active and visible to recruiters.
+A GitHub Actions workflow that downloads a PDF resume and attempts to update the resume attached to your Naukri profile.
 
----
+> **Important:** This project relies on Naukri web endpoints and session credentials, not a documented public upload API. Endpoints, form keys, and authentication behavior can change. Check Naukri's current terms and supported automation options before enabling scheduled runs. Never use this to evade account security controls or access an account you do not own.
 
-## How It Works
+## Current behavior
 
-1. Downloads your resume PDF from Google Drive
-2. Logs into Naukri using cookies (bypasses OTP)
-3. Uploads the resume to your profile
-4. Runs daily at 6 AM IST via GitHub Actions
+- Runs at **09:00, 13:00, and 18:00 India Standard Time (IST)**.
+- Can also be started manually from **Actions → Update Naukri Resume → Run workflow**.
+- Downloads a PDF from Google Drive, checks its PDF signature and size, then attempts the resume update.
+- Uses GitHub Actions secrets for authentication material.
+- Keeps TLS certificate verification enabled and applies request timeouts.
 
----
+GitHub scheduled workflows are best-effort and may run late. Repeated uploads do not guarantee additional recruiter visibility. If one daily update is sufficient, remove two cron entries from `.github/workflows/Resume-Updater.yml`.
 
-## Quick Setup (5 Steps)
+## Setup
 
-### Step 1: Fork This Repository
+### 1. Store the PDF in Google Drive
 
-1. Click the **Fork** button at the top right of this page
-2. This creates a copy in your GitHub account
+Upload the resume PDF to Google Drive. The current downloader expects a file ID and a link the runner can read without an interactive Google sign-in.
 
----
+**Privacy warning:** “Anyone with the link” makes the resume accessible to anyone who obtains the link. A resume contains personal information. Use only if you accept that exposure; otherwise change the downloader to use an authenticated Google Drive integration before running this workflow.
 
-### Step 2: Upload Resume to Google Drive
+The file ID is the value between `/d/` and `/view` in a standard Drive URL.
 
-1. Go to [Google Drive](https://drive.google.com)
-2. Upload your resume (must be **PDF** format)
-3. Right-click the file → **Share** → **General access** → **Anyone with the link**
-4. Click **Copy link**
+### 2. Configure GitHub Actions secrets
 
-**Example link:**
-```
-https://drive.google.com/file/d/1ABC123xyz/view?usp=sharing
-```
+Open **Repository → Settings → Secrets and variables → Actions → New repository secret** and add:
 
-**Your FILE_ID is:** `1ABC123xyz` (the part between `/d/` and `/view`)
+| Secret | Value |
+|---|---|
+| `GOOGLE_DRIVE_FILE_ID` | Google Drive file ID |
+| `NAUKRI_FORM_KEY` | Form key obtained during a normal, manual resume upload, if still required by Naukri |
+| `NAUKRI_COOKIES` | Session cookie string, only if permitted by Naukri's current rules |
 
----
+Never commit credentials to source control, print them in workflow logs, or paste them into chat. Session cookies are equivalent to account credentials. If exposed, sign out/revoke sessions and replace them.
 
-### Step 3: Get FORM_KEY from Naukri
+### 3. Run a manual test first
 
-This is required for resume upload to work.
+1. Open the repository's **Actions** tab.
+2. Select **Update Naukri Resume**.
+3. Choose **Run workflow**.
+4. Inspect the logs for the first error; logs should not contain secrets.
+5. Sign in to Naukri normally and verify the resume shown on your profile.
 
-1. Login to [Naukri.com](https://www.naukri.com)
-2. Go to your profile and click **Update Resume**
-3. Open **DevTools** (Press `F12`)
-4. Go to **Network** tab
-5. Upload any resume manually
-6. Look for a request to `filevalidation.naukri.com/file`
-7. Click it → **Payload** tab → Find `formKey`
+Do not assume a green workflow means the resume is visible. Confirm it in your profile.
 
-**Example:** `formKey: F1a2b3c4d5e6f7`
+## Schedule
 
-**Your FORM_KEY is:** `F1a2b3c4d5e6f7`
+GitHub Actions cron uses **UTC**. These entries correspond to India Standard Time:
 
----
+| IST | UTC cron |
+|---|---|
+| 09:00 | `30 3 * * *` |
+| 13:00 | `30 7 * * *` |
+| 18:00 | `30 12 * * *` |
 
-### Step 4: Get NAUKRI_COOKIES
-
-Naukri sends OTP for automated logins. We bypass this using browser cookies.
-
-1. Login to [Naukri.com](https://www.naukri.com) in Chrome (complete OTP if asked)
-2. Once logged in, press `F12` to open DevTools
-3. Go to **Application** tab → **Cookies** → `https://www.naukri.com`
-4. Find and copy these 3 cookies:
-
-| Cookie Name | Example Value |
-|-------------|---------------|
-| `nauk_at` | `eyJraWQiOiIz...` (very long) |
-| `nauk_rt` | `672301de8278...` |
-| `nauk_sid` | `672301de8278...` |
-
-5. Format them as one string:
-
-```
-nauk_at=YOUR_NAUK_AT_VALUE; nauk_rt=YOUR_NAUK_RT_VALUE; nauk_sid=YOUR_NAUK_SID_VALUE
-```
-
-**Quick Method:** Run this in DevTools Console tab:
-```javascript
-['nauk_at','nauk_rt','nauk_sid'].map(n=>`${n}=${document.cookie.split('; ').find(c=>c.startsWith(n))?.split('=').slice(1).join('=')}`).join('; ')
-```
-
----
-
-### Step 5: Add GitHub Secrets
-
-1. Go to your forked repository on GitHub
-2. Click **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret** and add these 3 secrets:
-
-| Secret Name | Value |
-|-------------|-------|
-| `GOOGLE_DRIVE_FILE_ID` | Your file ID from Step 2 |
-| `NAUKRI_FORM_KEY` | Your form key from Step 3 |
-| `NAUKRI_COOKIES` | Your cookie string from Step 4 |
-
----
-
-## Test the Workflow
-
-1. Go to your repository → **Actions** tab
-2. Click **Update Naukri Resume** workflow
-3. Click **Run workflow** → **Run workflow**
-4. Wait for it to complete (green checkmark = success)
-
----
-
-## Change Schedule
-
-The workflow runs daily at **6 AM IST** by default.
-
-To change the time, edit `.github/workflows/ResumeUpdater.yml`:
-
-```yaml
-schedule:
-  - cron: '30 0 * * *'  # 6:00 AM IST (00:30 UTC)
-```
-
-**Cron format:** `minute hour * * *` (in UTC)
-
-| IST Time | UTC Cron |
-|----------|----------|
-| 6:00 AM | `30 0 * * *` |
-| 7:00 AM | `30 1 * * *` |
-| 8:00 AM | `30 2 * * *` |
-| 9:00 AM | `30 3 * * *` |
-
----
-
-## Important Notes
-
-- **Cookies expire in ~30 days** - You need to refresh them monthly by logging into Naukri again and updating the `NAUKRI_COOKIES` secret
-- **Resume must be PDF** format
-- **Google Drive file must be publicly accessible** (Anyone with the link)
-- GitHub Actions may have **5-15 minute delays** during high traffic
-
----
+GitHub scheduled workflows may be delayed, especially during periods of high load. The workflow is not guaranteed to run at the exact minute.
 
 ## Troubleshooting
 
-| Error | Solution |
-|-------|----------|
-| `Not a valid PDF` | Make sure Google Drive file is public and is a PDF |
-| `No auth token` | Cookies expired - refresh them (Step 4) |
-| `Profile fetch failed` | Token refresh failed - get new cookies |
-| Workflow not running | Check Actions tab is enabled in your fork |
+| Symptom | What to check |
+|---|---|
+| Missing secret | Add the exact secret name under repository Actions secrets |
+| Not a PDF | Check the Drive ID and that the response is a PDF rather than an HTML sign-in page |
+| HTTP 401/403 | Session may have expired, or Naukri may require a fresh normal sign-in |
+| HTTP 400/404 | Naukri may have changed its internal endpoint or form key requirements; do not repeatedly retry |
+| Workflow did not start | Confirm Actions are enabled and check the workflow file is on the default branch |
+| Green run but old resume remains | Verify the profile manually; the website may have rejected or not processed the request |
 
----
+## Limitations
+
+- This is not an official Naukri integration.
+- Authentication cookies expire and must not be shared.
+- No automatic workflow can guarantee recruiter views or ranking.
+- The workflow does not bypass CAPTCHA or OTP challenges.
 
 ## License
 
-MIT - Feel free to use and modify.
+MIT
