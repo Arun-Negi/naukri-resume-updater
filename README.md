@@ -1,154 +1,52 @@
 # Naukri Resume Auto-Updater
 
-Automatically update your Naukri profile resume every day using GitHub Actions. This keeps your profile active and visible to recruiters.
+This workflow downloads the existing resume PDF from Google Drive and attempts to update the resume through Naukri's website UI using Playwright. It deliberately avoids the previous undocumented token-refresh/profile API calls.
 
----
+## Important authentication limitation
 
-## How It Works
+GitHub-hosted Actions runners are unattended. The workflow can submit username/password credentials stored as GitHub Actions secrets. If Naukri asks for email/SMS OTP, CAPTCHA, or another human security challenge, the run stops without uploading. It does not bypass the challenge or claim success.
 
-1. Downloads your resume PDF from Google Drive
-2. Logs into Naukri using cookies (bypasses OTP)
-3. Uploads the resume to your profile
-4. Runs daily at 6 AM IST via GitHub Actions
+If Naukri explicitly offers authenticator-app TOTP for your account, you may optionally configure `NAUKRI_TOTP_SECRET`. Do not use this for an email/SMS OTP, and do not paste credentials or OTPs into chat, workflow inputs, source code, or logs. If Naukri only supports email/SMS OTP, fully unattended GitHub-hosted login may not be feasible; use an approved interactive sign-in flow instead.
 
----
+## GitHub Actions secrets
 
-## Quick Setup (5 Steps)
+In **Settings → Secrets and variables → Actions**, configure:
 
-### Step 1: Fork This Repository
+| Secret | Purpose |
+| --- | --- |
+| `NAUKRI_USERNAME` | Your Naukri login username/email |
+| `NAUKRI_PASSWORD` | Your Naukri password |
+| `GOOGLE_DRIVE_FILE_ID` | ID of the existing resume PDF in Google Drive |
+| `NAUKRI_TOTP_SECRET` | Optional; only if Naukri supports authenticator-app TOTP |
 
-1. Click the **Fork** button at the top right of this page
-2. This creates a copy in your GitHub account
+The Google Drive resume source is unchanged. The PDF must be accessible to the workflow and the downloaded content must begin with a PDF signature. The script does not print credential values, cookies, OTPs, or page contents.
 
----
+Remove the obsolete `NAUKRI_COOKIES` and `NAUKRI_FORM_KEY` repository secrets after you have switched over. Since session values were previously shared in chat, revoke/sign out those sessions where possible and rotate credentials if appropriate.
 
-### Step 2: Upload Resume to Google Drive
+## Schedule
 
-1. Go to [Google Drive](https://drive.google.com)
-2. Upload your resume (must be **PDF** format)
-3. Right-click the file → **Share** → **General access** → **Anyone with the link**
-4. Click **Copy link**
+The workflow preserves the intended schedule (GitHub cron is UTC):
 
-**Example link:**
-```
-https://drive.google.com/file/d/1ABC123xyz/view?usp=sharing
-```
+- 01:00 IST — `30 19 * * 0-6` (previous UTC day)
+- 07:00 IST — `30 1 * * 0-6`
+- 12:00 IST — `30 6 * * 0-6`
 
-**Your FILE_ID is:** `1ABC123xyz` (the part between `/d/` and `/view`)
+You can also run it manually from **Actions → Update Naukri Resume → Run workflow**.
 
----
+## Success verification
 
-### Step 3: Get FORM_KEY from Naukri
-
-This is required for resume upload to work.
-
-1. Login to [Naukri.com](https://www.naukri.com)
-2. Go to your profile and click **Update Resume**
-3. Open **DevTools** (Press `F12`)
-4. Go to **Network** tab
-5. Upload any resume manually
-6. Look for a request to `filevalidation.naukri.com/file`
-7. Click it → **Payload** tab → Find `formKey`
-
-**Example:** `formKey: F1a2b3c4d5e6f7`
-
-**Your FORM_KEY is:** `F1a2b3c4d5e6f7`
-
----
-
-### Step 4: Get NAUKRI_COOKIES
-
-Naukri sends OTP for automated logins. We bypass this using browser cookies.
-
-1. Login to [Naukri.com](https://www.naukri.com) in Chrome (complete OTP if asked)
-2. Once logged in, press `F12` to open DevTools
-3. Go to **Application** tab → **Cookies** → `https://www.naukri.com`
-4. Find and copy these 3 cookies:
-
-| Cookie Name | Example Value |
-|-------------|---------------|
-| `nauk_at` | `eyJraWQiOiIz...` (very long) |
-| `nauk_rt` | `672301de8278...` |
-| `nauk_sid` | `672301de8278...` |
-
-5. Format them as one string:
-
-```
-nauk_at=YOUR_NAUK_AT_VALUE; nauk_rt=YOUR_NAUK_RT_VALUE; nauk_sid=YOUR_NAUK_SID_VALUE
-```
-
-**Quick Method:** Run this in DevTools Console tab:
-```javascript
-['nauk_at','nauk_rt','nauk_sid'].map(n=>`${n}=${document.cookie.split('; ').find(c=>c.startsWith(n))?.split('=').slice(1).join('=')}`).join('; ')
-```
-
----
-
-### Step 5: Add GitHub Secrets
-
-1. Go to your forked repository on GitHub
-2. Click **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret** and add these 3 secrets:
-
-| Secret Name | Value |
-|-------------|-------|
-| `GOOGLE_DRIVE_FILE_ID` | Your file ID from Step 2 |
-| `NAUKRI_FORM_KEY` | Your form key from Step 3 |
-| `NAUKRI_COOKIES` | Your cookie string from Step 4 |
-
----
-
-## Test the Workflow
-
-1. Go to your repository → **Actions** tab
-2. Click **Update Naukri Resume** workflow
-3. Click **Run workflow** → **Run workflow**
-4. Wait for it to complete (green checkmark = success)
-
----
-
-## Change Schedule
-
-The workflow runs daily at **6 AM IST** by default.
-
-To change the time, edit `.github/workflows/ResumeUpdater.yml`:
-
-```yaml
-schedule:
-  - cron: '30 0 * * *'  # 6:00 AM IST (00:30 UTC)
-```
-
-**Cron format:** `minute hour * * *` (in UTC)
-
-| IST Time | UTC Cron |
-|----------|----------|
-| 6:00 AM | `30 0 * * *` |
-| 7:00 AM | `30 1 * * *` |
-| 8:00 AM | `30 2 * * *` |
-| 9:00 AM | `30 3 * * *` |
-
----
-
-## Important Notes
-
-- **Cookies expire in ~30 days** - You need to refresh them monthly by logging into Naukri again and updating the `NAUKRI_COOKIES` secret
-- **Resume must be PDF** format
-- **Google Drive file must be publicly accessible** (Anyone with the link)
-- GitHub Actions may have **5-15 minute delays** during high traffic
-
----
+A run is considered successful only when the profile page displays a recognized resume-update confirmation or, after reloading, the exact uploaded filename. If the UI changes or confirmation cannot be verified, the workflow exits with failure and asks for manual verification. A green run has not yet been demonstrated in this repository; test with a manual run and inspect the Naukri profile before relying on the schedule.
 
 ## Troubleshooting
 
-| Error | Solution |
-|-------|----------|
-| `Not a valid PDF` | Make sure Google Drive file is public and is a PDF |
-| `No auth token` | Cookies expired - refresh them (Step 4) |
-| `Profile fetch failed` | Token refresh failed - get new cookies |
-| Workflow not running | Check Actions tab is enabled in your fork |
+- **Missing secret:** Add the named secret in repository settings.
+- **OTP required:** Email/SMS OTP cannot be entered interactively into a hosted runner. The workflow fails safely. TOTP is supported only when explicitly configured and supported by Naukri.
+- **CAPTCHA/security challenge:** The workflow stops; do not try to bypass it.
+- **Could not identify login/upload controls:** Naukri may have changed its UI. Inspect the profile manually and update selectors only after reviewing the live page.
+- **Upload unverified:** Check your Naukri profile manually before rerunning to avoid unnecessary duplicate uploads.
 
----
+## Security
 
-## License
-
-MIT - Feel free to use and modify.
+- Never commit credentials, OTPs, cookies, or Playwright browser state.
+- Keep GitHub repository write access restricted because people with write access can generally use repository Actions secrets.
+- This project is an unofficial personal automation and depends on Naukri's current UI and policies.
