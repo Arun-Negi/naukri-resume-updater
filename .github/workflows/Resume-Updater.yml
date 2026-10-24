@@ -38,8 +38,10 @@ jobs:
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
-      - name: Restore Google-authenticated Naukri session and refresh resume
+      - name: Sign in with Naukri username and password, then refresh resume
         env:
-          NAUKRI_STORAGE_STATE_B64: ${{ secrets.NAUKRI_STORAGE_STATE_B64 }}
+          NAUKRI_USERNAME: ${{ secrets.NAUKRI_USERNAME }}
+          NAUKRI_PASSWORD: ${{ secrets.NAUKRI_PASSWORD }}
+          NAUKRI_TOTP_SECRET: ${{ secrets.NAUKRI_TOTP_SECRET }}
           GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
         run: python upload_resume.py
