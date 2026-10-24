@@ -1,52 +1,61 @@
-# Naukri Resume Auto-Updater
+# Naukri Resume Refresh
 
-This workflow downloads the existing resume PDF from Google Drive and attempts to update the resume through Naukri's website UI using Playwright. It deliberately avoids the previous undocumented token-refresh/profile API calls.
+GitHub Actions downloads the existing resume PDF from Google Drive and attempts to update the Naukri profile through the website UI using Playwright. The workflow name is **Naukri Resume Refresh (IST Schedule)**.
 
-## Important authentication limitation
+## Google sign-in: one-time manual setup
 
-GitHub-hosted Actions runners are unattended. The workflow can submit username/password credentials stored as GitHub Actions secrets. If Naukri asks for email/SMS OTP, CAPTCHA, or another human security challenge, the run stops without uploading. It does not bypass the challenge or claim success.
+This account uses **Continue with Google**. The workflow does not ask for or automate your Google password. Instead, sign in manually in a trusted browser and export a Playwright storage-state JSON after Naukri is signed in.
 
-If Naukri explicitly offers authenticator-app TOTP for your account, you may optionally configure `NAUKRI_TOTP_SECRET`. Do not use this for an email/SMS OTP, and do not paste credentials or OTPs into chat, workflow inputs, source code, or logs. If Naukri only supports email/SMS OTP, fully unattended GitHub-hosted login may not be feasible; use an approved interactive sign-in flow instead.
+1. On your own computer, open a trusted browser and sign in to Naukri using **Continue with Google**.
+2. Export the Playwright storage state for the signed-in Naukri session to a local JSON file. The file contains sensitive cookies/session data. Never commit it, attach it to an issue, or paste it into chat.
+3. Base64-encode the JSON file locally, without adding line breaks, and add the resulting value as a repository **Actions secret** named `NAUKRI_STORAGE_STATE_B64`.
+4. Keep `GOOGLE_DRIVE_FILE_ID` as a repository Actions secret pointing to the existing resume PDF.
+5. Run the workflow manually once and inspect the run logs and your Naukri profile. If the session is rejected, refresh the state and update the secret.
+
+Example local base64 encoding commands:
+
+- macOS: `base64 < naukri-storage-state.json | tr -d '\\n' | pbcopy` (copies the encoded secret value to the clipboard)
+- Linux: `base64 -w 0 naukri-storage-state.json`
+
+Do not send the JSON or encoded secret to ChatGPT. Anyone who obtains the state may be able to reuse your authenticated session until it expires or is revoked. Restrict repository write access and rotate/sign out the session if it is exposed.
+
+**Important limitation:** Google or Naukri may reject automated/headless sessions, bind sessions to a device/IP, require additional verification, or expire the session. This approach is not guaranteed to work unattended. The workflow stops on a detected login/security challenge and only reports success when the page confirms the resume update or the uploaded filename is visible after reload.
 
 ## GitHub Actions secrets
 
-In **Settings → Secrets and variables → Actions**, configure:
+Configure these in **Settings → Secrets and variables → Actions → New repository secret**:
 
 | Secret | Purpose |
 | --- | --- |
-| `NAUKRI_USERNAME` | Your Naukri login username/email |
-| `NAUKRI_PASSWORD` | Your Naukri password |
+| `NAUKRI_STORAGE_STATE_B64` | Base64-encoded Playwright storage-state JSON exported after signing in to Naukri with Google |
 | `GOOGLE_DRIVE_FILE_ID` | ID of the existing resume PDF in Google Drive |
-| `NAUKRI_TOTP_SECRET` | Optional; only if Naukri supports authenticator-app TOTP |
 
-The Google Drive resume source is unchanged. The PDF must be accessible to the workflow and the downloaded content must begin with a PDF signature. The script does not print credential values, cookies, OTPs, or page contents.
+The resume source remains the existing Google Drive PDF. The script validates the downloaded PDF signature and does not print secret values, cookies, browser state, OTPs, or page contents.
 
-Remove the obsolete `NAUKRI_COOKIES` and `NAUKRI_FORM_KEY` repository secrets after you have switched over. Since session values were previously shared in chat, revoke/sign out those sessions where possible and rotate credentials if appropriate.
+Remove obsolete `NAUKRI_COOKIES`, `NAUKRI_FORM_KEY`, `NAUKRI_USERNAME`, `NAUKRI_PASSWORD`, and `NAUKRI_TOTP_SECRET` secrets once the new flow is configured and confirmed. Since session values were previously shared in chat, revoke/sign out those sessions where possible.
 
 ## Schedule
 
-The workflow preserves the intended schedule (GitHub cron is UTC):
+The workflow preserves the requested schedule. GitHub cron is UTC:
 
-- 01:00 IST — `30 19 * * 0-6` (previous UTC day)
-- 07:00 IST — `30 1 * * 0-6`
-- 12:00 IST — `30 6 * * 0-6`
+- **01:00 IST** — `30 19 * * 0-6` (previous UTC day)
+- **07:00 IST** — `30 1 * * 0-6`
+- **12:00 IST** — `30 6 * * 0-6`
 
-You can also run it manually from **Actions → Update Naukri Resume → Run workflow**.
+To test manually: **Actions → Naukri Resume Refresh (IST Schedule) → Run workflow**.
 
 ## Success verification
 
-A run is considered successful only when the profile page displays a recognized resume-update confirmation or, after reloading, the exact uploaded filename. If the UI changes or confirmation cannot be verified, the workflow exits with failure and asks for manual verification. A green run has not yet been demonstrated in this repository; test with a manual run and inspect the Naukri profile before relying on the schedule.
+A run is considered successful only when the profile page displays a recognized resume-update confirmation or, after reloading, the uploaded filename. A green run has not yet been demonstrated. Check the Naukri profile manually before relying on the schedule.
 
 ## Troubleshooting
 
-- **Missing secret:** Add the named secret in repository settings.
-- **OTP required:** Email/SMS OTP cannot be entered interactively into a hosted runner. The workflow fails safely. TOTP is supported only when explicitly configured and supported by Naukri.
-- **CAPTCHA/security challenge:** The workflow stops; do not try to bypass it.
-- **Could not identify login/upload controls:** Naukri may have changed its UI. Inspect the profile manually and update selectors only after reviewing the live page.
-- **Upload unverified:** Check your Naukri profile manually before rerunning to avoid unnecessary duplicate uploads.
+- **Missing secret:** Add the exact secret name listed above.
+- **Session rejected or expired:** Sign in again in a trusted browser and replace `NAUKRI_STORAGE_STATE_B64`.
+- **CAPTCHA/security challenge:** The workflow stops; do not attempt to bypass it.
+- **Upload control not found:** Naukri may have changed its UI; no upload is claimed.
+- **Upload unverified:** Check the profile manually before rerunning to avoid unnecessary duplicate uploads.
 
 ## Security
 
-- Never commit credentials, OTPs, cookies, or Playwright browser state.
-- Keep GitHub repository write access restricted because people with write access can generally use repository Actions secrets.
-- This project is an unofficial personal automation and depends on Naukri's current UI and policies.
+Never commit credentials, OTPs, cookies, or Playwright storage state. Restrict repository write access because users with write access may be able to use repository Actions secrets. This is unofficial personal automation and depends on Naukri's current UI and policies.

@@ -1,12 +1,11 @@
-"""Browser-based Naukri resume updater.
+"""Browser-based Naukri resume updater using a pre-authenticated Playwright session.
 
-Uses the public website UI instead of undocumented private JSON endpoints.
-Email/SMS OTP and CAPTCHA cannot be completed unattended on GitHub-hosted runners:
-the script stops safely rather than bypassing them or attempting an upload.
-If the account offers authenticator-app TOTP, NAUKRI_TOTP_SECRET can be configured.
+The Google sign-in is completed manually in a trusted browser. The workflow restores
+the exported Playwright storage state and stops if Naukri no longer accepts it.
 """
+import base64
+import json
 import os
-import re
 import sys
 import tempfile
 from datetime import datetime
@@ -17,7 +16,6 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://www.naukri.com"
-LOGIN_URL = f"{BASE_URL}/nlogin/login"
 PROFILE_URL = f"{BASE_URL}/mnjuser/profile"
 
 
@@ -55,97 +53,40 @@ def find_first_visible(page, selectors):
     return None
 
 
-def login(page, username: str, password: str, totp_secret: str | None) -> None:
-    page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-
-    user_field = find_first_visible(page, [
-        'input[placeholder*="Email" i]',
-        'input[placeholder*="username" i]',
-        'input[name="email"]',
-        'input[type="email"]',
-        'input[type="text"]',
-    ])
-    pass_field = find_first_visible(page, [
-        'input[placeholder*="Password" i]',
-        'input[name="password"]',
-        'input[type="password"]',
-    ])
-    if not user_field or not pass_field:
+def load_storage_state(encoded_state: str) -> dict:
+    try:
+        decoded = base64.b64decode(encoded_state, validate=True)
+        state = json.loads(decoded)
+    except Exception as exc:
         raise RuntimeError(
-            "Could not identify Naukri's username/password form. The login page "
-            "may have changed or shown a CAPTCHA/security challenge; no upload was attempted."
+            "NAUKRI_STORAGE_STATE_B64 is not valid base64-encoded Playwright storage-state JSON."
+        ) from exc
+    if not isinstance(state, dict) or not isinstance(state.get("cookies"), list):
+        raise RuntimeError(
+            "Storage state format is invalid. Export it from Playwright after signing in to Naukri."
         )
+    return state
 
-    user_field.fill(username)
-    pass_field.fill(password)
 
-    submit = find_first_visible(page, [
-        'button:has-text("Login")',
-        'button:has-text("Sign in")',
-        'button[type="submit"]',
-    ])
-    if not submit:
-        raise RuntimeError("Could not identify the login button; no upload was attempted.")
-    submit.click()
-    page.wait_for_timeout(2500)
-
-    # Handle authenticator-app TOTP only. Never guess, scrape, or bypass email/SMS OTP.
-    otp_field = find_first_visible(page, [
-        'input[autocomplete="one-time-code"]',
-        'input[placeholder*="OTP" i]',
-        'input[name*="otp" i]',
-        'input[id*="otp" i]',
-    ])
-    if otp_field:
-        if not totp_secret:
-            raise RuntimeError(
-                "Naukri requires an OTP. GitHub Actions cannot receive a live email/SMS "
-                "OTP interactively. If Naukri explicitly supports authenticator-app TOTP, "
-                "add NAUKRI_TOTP_SECRET as a GitHub Actions secret; otherwise use an "
-                "approved interactive/manual sign-in flow. No resume upload was attempted."
-            )
-        try:
-            import pyotp
-        except ImportError as exc:
-            raise RuntimeError("TOTP support is not installed; no upload was attempted.") from exc
-        otp_field.fill(pyotp.TOTP(totp_secret).now())
-        otp_submit = find_first_visible(page, [
-            'button:has-text("Verify")',
-            'button:has-text("Submit")',
-            'button:has-text("Continue")',
-            'button[type="submit"]',
-        ])
-        if not otp_submit:
-            raise RuntimeError("OTP field found but verification button was not found.")
-        otp_submit.click()
-        page.wait_for_timeout(3000)
-
-    body = page.locator("body").inner_text(timeout=15000).lower()
-    if any(marker in body for marker in ["captcha", "verify you are human", "security challenge"]):
-        raise RuntimeError("Naukri presented a CAPTCHA/security challenge. Stopped without uploading.")
-    if find_first_visible(page, [
-        'input[autocomplete="one-time-code"]',
-        'input[placeholder*="OTP" i]',
-        'input[name*="otp" i]',
-        'input[id*="otp" i]',
-    ]):
-        raise RuntimeError("OTP was not accepted or another OTP is required. No upload was attempted.")
-
-    # A successful login should reach a signed-in profile page or show account navigation.
+def verify_authenticated_session(page) -> None:
     page.goto(PROFILE_URL, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2000)
-    if "login" in page.url.lower() or "nlogin" in page.url.lower():
+    current_url = page.url.lower()
+    body = page.locator("body").inner_text(timeout=15000).lower()
+    if "nlogin" in current_url or "/login" in current_url or "continue with google" in body:
         raise RuntimeError(
-            "Naukri did not establish a signed-in session. Check credentials, OTP policy, "
-            "or security restrictions. No upload was attempted."
+            "Saved browser session is no longer authenticated or was rejected. "
+            "Sign in to Naukri with Google in a trusted browser, export fresh storage state, "
+            "and update NAUKRI_STORAGE_STATE_B64. No upload was attempted."
         )
+    if any(marker in body for marker in ["captcha", "verify you are human", "security challenge"]):
+        raise RuntimeError("Naukri presented a CAPTCHA/security challenge. Stopped without uploading.")
 
 
 def upload_and_verify(page, pdf_path: Path, filename: str) -> None:
     page.goto(PROFILE_URL, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(1500)
 
-    # Prefer a visible upload input if available; otherwise open the resume section's action.
     file_input = page.locator('input[type="file"]')
     if file_input.count() == 0:
         update_button = find_first_visible(page, [
@@ -183,7 +124,6 @@ def upload_and_verify(page, pdf_path: Path, filename: str) -> None:
         pass
     page.wait_for_timeout(2500)
 
-    # A click or HTTP 200 alone is not success: require an on-page confirmation.
     body = page.locator("body").inner_text(timeout=15000)
     lower = body.lower()
     success_markers = [
@@ -194,7 +134,6 @@ def upload_and_verify(page, pdf_path: Path, filename: str) -> None:
         "successfully updated your resume",
     ]
     if not any(marker in lower for marker in success_markers):
-        # Some layouts show the uploaded filename rather than a toast. Reload and verify it.
         page.reload(wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1500)
         body = page.locator("body").inner_text(timeout=15000)
@@ -207,10 +146,9 @@ def upload_and_verify(page, pdf_path: Path, filename: str) -> None:
 
 
 def main() -> int:
-    username = required_env("NAUKRI_USERNAME")
-    password = required_env("NAUKRI_PASSWORD")
+    encoded_state = required_env("NAUKRI_STORAGE_STATE_B64")
     file_id = required_env("GOOGLE_DRIVE_FILE_ID")
-    totp_secret = os.getenv("NAUKRI_TOTP_SECRET", "").replace(" ", "").strip() or None
+    storage_state = load_storage_state(encoded_state)
 
     filename = f"resume_{datetime.now().strftime('%d_%b_%Y').lower()}.pdf"
     with tempfile.TemporaryDirectory(prefix="naukri-resume-") as temp_dir:
@@ -220,12 +158,12 @@ def main() -> int:
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(accept_downloads=False)
+            context = browser.new_context(storage_state=storage_state, accept_downloads=False)
             page = context.new_page()
             page.set_default_timeout(12000)
             try:
-                login(page, username, password, totp_secret)
-                print("[OK] Browser session appears authenticated.")
+                verify_authenticated_session(page)
+                print("[OK] Saved browser session appears authenticated.")
                 upload_and_verify(page, pdf_path, filename)
                 print(f"[VERIFIED] Naukri page confirmed the resume update: {filename}")
             finally:
@@ -238,6 +176,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        # Never print secrets, page contents, cookies, or OTP values.
+        # Never print secrets, cookies, browser state, or page contents.
         print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
         raise SystemExit(1)
